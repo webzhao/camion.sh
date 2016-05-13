@@ -1,0 +1,351 @@
+#!/usr/bin/env bash
+
+#
+# camion.sh - Shell script to deploy web app to server.
+# Released under the MIT License.
+# https://github.com/webzhao/camion.sh
+#
+
+VERSION=1.0.0
+CONFIG=./deploy.ini
+TEMP_DIR=camion
+REQUIRED_CONF="project user dir hosts files"
+
+#
+# text style control
+#
+_NORMAL=`tput sgr0`
+UNDERLINE=`tput smul`
+BOLD=`tput bold`
+RED=`tput setaf 1`
+GREEN=`tput setaf 2`
+YELLOW=`tput setaf 3`
+
+#
+# variables, will be set after parsing config
+#
+env=''          # server environment
+sudo=''         # switch to user
+runOnServer=''  # run commond on server
+sync=''         # rsync to server
+bakDir=''       # dir to backup history files
+logFile=''      # file to store deploy history
+
+
+#
+# entry point
+#
+main() {
+
+    local cmd=$1
+    local env=$2
+
+    # show usage if parameter isn't enough
+    if [ $# -lt 2 ] && [[ " init update " != *" $cmd "* ]]; then
+        usage
+        exit 1
+    fi
+
+    # init config for current project
+    if [ $cmd == "init" ]; then
+        init
+        exit $?
+    fi
+
+    # update camion.sh itself
+    if [ $cmd == "update" ]; then
+        update
+        exit $?
+    fi
+
+    # run deploy command
+    if [[ " deploy list revert " != *" $cmd "* ]]; then
+        error "Unknown command!"
+        usage
+        exit 1
+    fi
+
+    #parse config
+    parseConfig
+
+    # ensure all required configs are set
+    checkConfig $env
+
+    # set global variables
+    setGlobal $env
+
+    # run command
+    eval $cmd $env
+
+}
+
+#
+# show error message
+#
+error() {
+    local msg=$1
+    echo "${RED}Error: $msg${_NORMAL}"
+}
+
+#
+# show success message
+#
+success() {
+    local msg=$1
+    echo "${GREEN}✓ $msg${_NORMAL}"
+}
+
+#
+# init project
+#
+init() {
+    if [ -f $CONFIG ]; then
+        error 'Config file exists!'
+        return 1
+    fi
+    read -d '' content <<-EOF
+[common]
+user sync360
+dir /home/q/system/dmp
+
+[test]
+hosts 10.16.13.1
+
+[production]
+hosts 10.16.13.3 10.16.13.4
+EOF
+    echo "$content" > $CONFIG
+    success "Done!"
+    return 0
+}
+
+#
+# parse config
+#
+parseConfig() {
+    local env=''
+    if [ ! -f "$CONFIG" ]; then
+        error "Can't find config file!"
+        exit
+    fi
+    while read line; do
+        # ignore empty line
+        [ -z "$line" ] && continue
+        # ignore inline starts with ';'
+        [[ $line == \;* ]] && continue
+        # check whether a new env start
+        e=$(echo $line | egrep "\[\w+\]" | sed 's/\W//g')
+        # start to set config for environment $e
+        if [ "$e" ]; then
+            env=$e
+            continue
+        fi
+        # split the line by '='
+        IFS='=' read -r key value <<< "$line"
+        # reset delimiter
+        IFS=$' \t\n'
+        # trim key and value
+        key=$(echo $key)
+        value=$(echo $value)
+        # set config variable
+        eval "config_${env}_${key}=\"$value\""
+    done < $CONFIG
+}
+
+#
+# set global variables
+#
+setGlobal() {
+    env=$1
+    user=$(getConfig ${env} user)
+    project=$(getConfig ${env} project)
+    sudo="/usr/bin/sudo -u $user"
+    runOnServer="$sudo ssh"
+    sync="$sudo rsync -aqI"
+    bakDir="/home/$user/.camion/$project/$env"
+    logFile="$bakDir/history"
+}
+
+#
+# check config
+#
+checkConfig() {
+    local env=$1
+    for key in $REQUIRED_CONF; do
+        value=$(getConfig ${env} ${key})
+        if [ -z "$value" ]; then
+            error "'$key' is not configured for $env environment!"
+            exit 1
+        fi
+    done
+}
+
+#
+# get config by env and key
+#
+getConfig() {
+    local env=$1
+    local key=$2
+    local k1="config_${env}_${key}"
+    local k2="config_common_${key}"
+    local v1=${!k1}
+    local v2=${!k2}
+    echo ${v1:-$v2}
+}
+
+#
+# list history
+#
+list() {
+    local logs=$($sudo tail -n 10 $logFile | sed '1!G;h;$!d')
+    if [ -z "$logs" ]; then
+        echo "No deploy history."
+    else
+        echo -e "Deploy history:\n"
+        echo "$logs" | cut -d $'\t' -f1,2,4
+        echo -e "\nSee ${UNDERLINE}$logFile${_NORMAL} for more.\n"
+    fi
+}
+
+#
+# revert to last version
+#
+revert() {
+    local count=$($sudo cat $logFile | wc -l)
+    if [ $count -lt 2 ]; then
+        error "No history to revert."
+        exit 1
+    fi
+    local last=$($sudo tail -n 2 $logFile | head -n 1)
+    echo "Here is the last version deployed:"
+    echo "${GREEN}$last${_NORMAL}" | cut -d $'\t' -f1,2,4
+    echo -n "Are you sure to revert to it (y/n): "
+    read confirm
+    if [ $confirm != "y" ]; then
+        exit 1;
+    fi
+    bakFile=$(echo "$last" | cut -d $'\t' -f3)
+    sudo tar -xf $bakFile
+    sudo chown $USER:$USER $TEMP_DIR
+    syncToServer
+    clean
+    $sudo sed -i '$ d' $logFile
+    success "Done!"
+}
+
+#
+# deploy to server
+#
+deploy() {
+    local desc=""
+
+    # get description
+    while [ -z "$desc" ]; do
+        echo "Please input description for this deployment: "
+        read desc
+    done
+
+    # prepare
+    prepare=$(getConfig ${env} prepare)
+    if [ -n "$prepare" ]; then
+        echo "Running ${UNDERLINE}prepare${_NORMAL} hook: ${UNDERLINE}$prepare${_NORMAL}"
+        eval "$prepare"
+        success "Prepare hook finished."
+    fi
+
+    # make temp dir
+    [ ! -d $TEMP_DIR ] && mkdir $TEMP_DIR
+
+    # copy files to temp dir
+    files=$(getConfig ${env} files)
+    echo "Copying files to temporary directory..."
+    for file in $files; do
+        cp -r $file $TEMP_DIR/$file
+    done
+    success "All files copied."
+
+    # run before srcipts
+    before=$(getConfig ${env} before)
+    if [ -n "$before" ]; then
+        echo "Running ${UNDERLINE}before-deploy${_NORMAL} hook: ${UNDERLINE}$before${_NORMAL}"
+        eval "$before"
+        success "Before-deploy hook finished."
+    fi
+
+    # deploy to server
+    syncToServer
+
+    # add deploy history
+    now=$(date "+%Y年%m月%d日 %H:%M:%S")
+    bakFile="$bakDir/$(date +%Y%m%d%H%M%S).tar.gz"
+    [ ! -d $bakDir ] && $sudo mkdir -p $bakDir
+    $sudo tar -czf $bakFile $TEMP_DIR/*
+    echo -e "$now\t$USER\t$bakFile\t$desc" | $sudo tee -a $logFile > /dev/null
+
+    # do the clean work
+    clean
+
+    success "Done!"
+}
+
+#
+# sync files to server
+#
+syncToServer() {
+    dir=$(getConfig ${env} dir)
+    hosts=$(getConfig ${env} hosts)
+    cd $TEMP_DIR
+    for host in $hosts; do
+        # check dir
+        $runOnServer $host "[ ! -d $dir ] && mkdir -p $dir"
+        # copy file to server
+        echo "Syncing files to server ${UNDERLINE}$host${_NORMAL}"
+        $sync * $host:$dir
+        success "Files synced."
+        # run after script on server
+        after=$(getConfig ${env} after)
+        if [ -n "$after" ]; then
+            echo "Running ${UNDERLINE}after-deploy${_NORMAL} hook on server: ${UNDERLINE}$after${_NORMAL}"
+            $runOnServer $host "cd $dir; $after"
+            success "After-deploy hook finished."
+        fi
+    done
+    cd ..
+}
+
+#
+# do clean work after deploy
+#
+clean() {
+    rm -rf $TEMP_DIR
+    clean=$(getConfig ${env} clean)
+    if [ -n "$clean" ]; then
+        echo "Running ${UNDERLINE}clean${_NORMAL} hook: ${UNDERLINE}$clean${_NORMAL}"
+        eval "$before"
+        success "Clean hook finished."
+    fi
+}
+
+#
+# show usage
+#
+usage() {
+    cat <<-EOF
+
+${BOLD}Usage: camion <command> <env>${_NORMAL}
+
+Commands:
+  ${BOLD}init${_NORMAL}        generate sample config file in current directory
+  ${BOLD}deploy${_NORMAL}      deploy current version to server
+  ${BOLD}revert${_NORMAL}      revert to last deployed version
+  ${BOLD}list${_NORMAL}        show deploy history
+  ${BOLD}update${_NORMAL}      update camion.sh
+
+Please refer ${UNDERLINE}https://github.com/webzhao/camion.sh$_NORMAL for more details.
+
+EOF
+}
+
+#set -e
+main $*
+
