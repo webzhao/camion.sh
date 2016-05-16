@@ -103,17 +103,22 @@ init() {
         error 'Config file exists!'
         return 1
     fi
+    set +e
     read -d '' content <<-EOF
 [common]
-user sync360
-dir /home/q/system/dmp
+project = myapp
+user    = work
+dir     = /data/www/myapp
 
 [test]
-hosts 10.16.13.1
+files   = app src resource
+hosts   = 10.0.0.1
 
 [production]
-hosts 10.16.13.3 10.16.13.4
+files   = app pm2.json
+hosts   = 10.0.0.2 10.0.0.3
 EOF
+    set -e
     echo "$content" > $CONFIG
     success "Done!"
     return 0
@@ -208,7 +213,7 @@ list() {
 }
 
 #
-# revert to last version
+# revert to previous version
 #
 revert() {
     local count=$($sudo cat $logFile | wc -l)
@@ -216,15 +221,17 @@ revert() {
         error "No history to revert."
         exit 1
     fi
-    local last=$($sudo tail -n 2 $logFile | head -n 1)
-    echo "Here is the last version deployed:"
-    echo "${GREEN}$last${_NORMAL}" | cut -d $'\t' -f1,2,4
-    echo -n "Are you sure to revert to it (y/n): "
+    local previous=$($sudo tail -n 2 $logFile | head -n 1)
+    local current=$($sudo tail -n 1 $logFile)
+    echo "${GREEN}Current$_NORMAL   $current" | cut -d $'\t' -f1,2,4
+    echo "   ⬇ "
+    echo "${GREEN}Previous$_NORMAL  $previous" | cut -d $'\t' -f1,2,4
+    echo -n "Are you sure to revert to previous version (y/n): "
     read confirm
     if [ $confirm != "y" ]; then
         exit 1;
     fi
-    bakFile=$(echo "$last" | cut -d $'\t' -f3)
+    bakFile=$(echo "$previous" | cut -d $'\t' -f3)
     sudo tar -xf $bakFile
     sudo chown $USER:$USER $TEMP_DIR
     syncToServer
@@ -268,7 +275,7 @@ deploy() {
     files=$(getConfig ${env} files)
     echo "Copying files to temporary directory..."
     for file in $files; do
-        cp -r $file $TEMP_DIR/$file
+        cp -r --parents $file $TEMP_DIR/
     done
     success "All files copied."
 
@@ -294,6 +301,26 @@ deploy() {
     clean
 
     success "Done!"
+}
+
+#
+# assert git updated
+#
+assertGitUpdated() {
+    if [ "`git remote show origin|grep -c '\(out\|过时\)'`" != 0 ];then
+        error "Git: local out of date, please update"
+        exit 1
+    fi
+}
+
+#
+# assert git clean
+#
+assertGitClean() {
+    if [ "`git status app src|grep -c '\(clean\|干净\)'`" == 0 ];then
+        error "Git: please push local changes to server"
+        exit 1
+    fi
 }
 
 #

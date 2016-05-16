@@ -79,3 +79,16 @@ Revert to previous deployed version. Environment is required for this command.
 Upgrade `camion.sh` to latest version. Root privilege is required.
 
 
+## Utilities
+
+There are some built-in utilities you can use in `prepare`, `before` hook.
+
+#### assertGitUpdated
+
+To ensure local version is up to date.
+
+#### assertGitClean
+
+To ensure everything is pushed.
+
+
