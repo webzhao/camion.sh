@@ -52,7 +52,7 @@ hosts   = 10.0.0.2 10.0.0.3
 | after     | no        | commands to execute **ON SERVER** after deployment|
 | clean     | no        | commands to execute after deployment              |
 
-> NOTE: s
+> NOTE: `user` configured in `deploy.ini` must have permission to access servers using SSH key.
 
 ## Usage
 
