@@ -234,6 +234,14 @@ revert() {
 }
 
 #
+# upgrade camion.sh
+#
+update() {
+    sudo sh -c 'curl https://raw.githubusercontent.com/webzhao/camion.sh/master/camion > /usr/local/bin/camion'
+    success "Done!"
+}
+
+#
 # deploy to server
 #
 deploy() {
@@ -332,12 +340,12 @@ clean() {
 usage() {
     cat <<-EOF
 
-${BOLD}Usage: camion <command> <env>${_NORMAL}
+${BOLD}Usage: camion <command> [env]${_NORMAL}
 
 Commands:
   ${BOLD}init${_NORMAL}        generate sample config file in current directory
   ${BOLD}deploy${_NORMAL}      deploy current version to server
-  ${BOLD}revert${_NORMAL}      revert to last deployed version
+  ${BOLD}revert${_NORMAL}      revert to previous deployed version
   ${BOLD}list${_NORMAL}        show deploy history
   ${BOLD}update${_NORMAL}      update camion.sh
 
@@ -346,6 +354,6 @@ Please refer ${UNDERLINE}https://github.com/webzhao/camion.sh$_NORMAL for more d
 EOF
 }
 
-#set -e
+set -e
 main $*
 
