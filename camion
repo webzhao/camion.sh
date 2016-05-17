@@ -332,7 +332,7 @@ syncToServer() {
     cd $TEMP_DIR
     for host in $hosts; do
         # check dir
-        $runOnServer $host "[ ! -d $dir ] && mkdir -p $dir"
+        $runOnServer $host "[ ! -d $dir ] && mkdir -p $dir" || true
         # copy file to server
         echo "Syncing files to server ${UNDERLINE}$host${_NORMAL}"
         $sync * $host:$dir
