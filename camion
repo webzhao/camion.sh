@@ -120,7 +120,7 @@ hosts   = 10.0.0.2 10.0.0.3
 EOF
     set -e
     echo "$content" > $CONFIG
-    success "Done!"
+    success "Done!${_NORMAL} Config file ${BOLD}${CONFIG}${_NORMAL} generated."
     return 0
 }
 
