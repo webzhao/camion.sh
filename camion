@@ -304,10 +304,29 @@ deploy() {
 }
 
 #
+# update git refs and get revision
+#
+updateGitRefs() {
+    git remote update
+    local remote=$(git remote)
+    local branch=$(git rev-parse --abbrev-ref HEAD)
+    localRev=$(git rev-parse $branch)
+    remoteRev=$(git rev-parse $remote/$branch)
+    baseRev=$(git merge-base $branch $remote/$branch)
+}
+
+#
 # assert git updated
 #
 assertGitUpdated() {
-    if [ "`git remote show origin|grep -c '\(out\|过时\)'`" != 0 ];then
+    updateGitRefs
+    local outOfDate=false
+    if [[ $localRev != $remoteRev ]] && [[ $localRev == $baseRev ]]; then
+        outOfDate=true
+    elif [[ $remoteRev != $baseRev ]]; then
+        outOfDate=true
+    fi
+    if $outOfDate; then
         error "Git: local out of date, please update"
         exit 1
     fi
@@ -317,8 +336,13 @@ assertGitUpdated() {
 # assert git clean
 #
 assertGitClean() {
-    if [ "`git status app src|grep -c '\(clean\|干净\)'`" == 0 ];then
-        error "Git: please push local changes to server"
+    updateGitRefs
+    if [[ -n $(git status -s) ]]; then
+        error "Git: please commit local changes and push to remote"
+        exit 1
+    fi
+    if [ $localRev != $baseRev ]; then
+        error "Git: please push local commits to remote"
         exit 1
     fi
 }
