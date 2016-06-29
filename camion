@@ -335,7 +335,7 @@ syncToServer() {
         $runOnServer $host "[ ! -d $dir ] && mkdir -p $dir" || true
         # copy file to server
         echo "Syncing files to server ${UNDERLINE}$host${_NORMAL}"
-        $sync * $host:$dir
+        $sync --exclude=.* --exclude=.*/ --exclude=*.map * $host:$dir
         success "Files synced."
         # run after script on server
         after=$(getConfig ${env} after)
